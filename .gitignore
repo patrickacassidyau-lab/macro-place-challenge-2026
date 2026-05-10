@@ -1,7 +1,8 @@
 # Visualizations
 vis/
 
-# Python
+# Python / local tool caches (e.g. backtest matplotlib MPLCONFIGDIR)
+.mplconfig/
 __pycache__/
 *.py[cod]
 *$py.class

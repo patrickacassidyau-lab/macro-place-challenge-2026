@@ -49,6 +49,8 @@ baselines = [
 
 [project.scripts]
 evaluate = "macro_place.evaluate:main"
+backtest = "macro_place.backtest:main"
+placement-gif = "macro_place.animate_history:main"
 
 [project.urls]
 Homepage = "https://github.com/partcl/partcl-marco-place-challenge"

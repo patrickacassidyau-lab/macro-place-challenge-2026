@@ -8,16 +8,30 @@ Usage:
     uv run evaluate submissions/examples/greedy_row_placer.py
     uv run evaluate submissions/examples/greedy_row_placer.py --all
     uv run evaluate submissions/examples/greedy_row_placer.py -b ibm03
+    uv run evaluate submissions/mobo_surrogate/placer.py --half --fast   # 9 IBM designs, condensed MACRO_PLACER_* budgets
 """
 
+from pathlib import Path
+
+_MPLCACHE = Path(__file__).resolve().parent.parent / ".mplconfig"
+_MPLCACHE.mkdir(parents=True, exist_ok=True)
+
 import argparse
+import os
+
+os.environ.setdefault("MPLCONFIGDIR", str(_MPLCACHE))
+
 import importlib.util
 import sys
 import time
-from pathlib import Path
 
 from macro_place.loader import load_benchmark, load_benchmark_from_dir
 from macro_place.objective import compute_proxy_cost
+from macro_place.placer_presets import (
+    FAST_MACRO_PLACER_ENV,
+    SMOKE_MACRO_PLACER_ENV,
+    apply_preset_env,
+)
 from macro_place.utils import validate_placement, visualize_placement
 
 # ── IBM ICCAD04 benchmark list ──────────────────────────────────────────────
@@ -259,13 +273,29 @@ def main():
         "-b",
         type=str,
         default=None,
-        help="Run on a specific benchmark (e.g. ibm01). Default: ibm01.",
+        help="Run on a single benchmark (e.g. ibm01). Ignored if --all or --half.",
     )
     parser.add_argument(
         "--all",
         "-a",
         action="store_true",
         help="Run on all 17 IBM benchmarks.",
+    )
+    parser.add_argument(
+        "--half",
+        action="store_true",
+        help="Run on the first half of IBM benchmarks (9 designs; ordered list in this module).",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Apply condensed MACRO_PLACER_* env (same pipeline phases, shorter SA/oracle budgets). "
+        "Does not override variables you already exported.",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Ultra‑condensed MACRO_PLACER_* preset (implies wiring-speed budgets). Dominates --fast if both set.",
     )
     parser.add_argument(
         "--ng45",
@@ -279,8 +309,17 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.all and args.half:
+        print("Error: use either --all or --half, not both.", file=sys.stderr)
+        sys.exit(2)
+
+    if getattr(args, "smoke", False):
+        apply_preset_env(SMOKE_MACRO_PLACER_ENV)
+    elif getattr(args, "fast", False):
+        apply_preset_env(FAST_MACRO_PLACER_ENV)
+
     # ── resolve paths ────────────────────────────────────────────────────
-    testcase_root = Path("external/MacroPlacement/Testcases/ICCAD04")
+    testcase_root = Path("external/MacroPlacement/Testcases/ICCAD04").resolve()
     if not args.ng45 and not testcase_root.exists():
         print(f"Error: Testcases not found at {testcase_root}")
         print("Run: git submodule update --init external/MacroPlacement")
@@ -296,12 +335,21 @@ def main():
         benchmarks_to_run = list(NG45_BENCHMARKS.keys())
     elif args.all:
         benchmarks_to_run = BENCHMARKS
+    elif args.half:
+        benchmarks_to_run = BENCHMARKS[: (len(BENCHMARKS) + 1) // 2]
+    elif args.benchmark:
+        benchmarks_to_run = [args.benchmark]
     else:
-        benchmarks_to_run = [args.benchmark or "ibm01"]
+        benchmarks_to_run = ["ibm01"]
 
     # ── run ──────────────────────────────────────────────────────────────
     print("=" * 80)
-    print(f"evaluate · {placer_name}  ({placer_path})")
+    preset_note = ""
+    if getattr(args, "smoke", False):
+        preset_note = "  [SMOKE MACRO_PLACER preset]"
+    elif getattr(args, "fast", False):
+        preset_note = "  [FAST MACRO_PLACER preset]"
+    print(f"evaluate · {placer_name}  ({placer_path}){preset_note}")
     print("=" * 80)
     print()
 
