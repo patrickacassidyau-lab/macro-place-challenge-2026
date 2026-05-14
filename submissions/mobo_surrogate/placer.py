@@ -64,7 +64,6 @@ Env:
     MACRO_PLACER_LEGAL_CONG_ORDER — alternate post‑legal shuffle with **coolest‑cell‑first**
       sequential order (hotspot macros legalized last → better local search under PlacementCost).
     MACRO_PLACER_SA_RAMP=1|0 + _SA_DENS_RAMP_LO/_HI + _SA_ROUTE_RAMP_LO/_HI — curriculum WL→density/route stress
-    MACRO_PLACER_SA_RAMP_SHAPE=linear|concave|convex — reshape ramp progress t (concave=fast early; convex=slow early)
     MACRO_PLACER_ADAPT_MODES=1|0  scale density surrogate weights from initial cong/WL probe
     MACRO_PLACER_ADAPT_AXIS_DELTA=1|0  with ADAPT_MODES: scale axis-greed step (AXIS_DELTA×canvas)
       from initial cong/WL — >10 → ×0.55 (finer), <3 → ×1.65 (coarser); mid band unchanged
@@ -78,8 +77,8 @@ Env:
     MACRO_PLACER_FRESCO_ENABLE=0|1  congestion fresco: greedy large→small snap into coldest PLC bins (post-survivor)
     MACRO_PLACER_FRESCO_POOL=0|1  optional pool-seed fresco before mode SA (oracle-gated; capped macros)
     MACRO_PLACER_FRESCO_* — FRESCO_COLD_K / FRESCO_TRIALS / FRESCO_MACROS (default 16 largest movable)
-    MACRO_PLACER_EPLACE_GLOBAL=0|1  ePlace/DREAMPlace-style WL+density warmstart before coordinate SA
-    MACRO_PLACER_EPLACE_POOL=0|1  add analytical-global pool candidate before multi-mode SA
+    MACRO_PLACER_EPLACE_GLOBAL=0|1  ePlace/DREAMPlace-style WL+density warmstart before coordinate SA (default 1)
+    MACRO_PLACER_EPLACE_POOL=0|1  add analytical-global pool candidate before multi-mode SA (default 1)
     MACRO_PLACER_EPLACE_* — EPLACE_ITERS (default 72) / EPLACE_WL / EPLACE_DENS / EPLACE_CLUSTER
     MACRO_PLACER_EPLACE_LAMBDA_START / EPLACE_LAMBDA_GROWTH — density-penalty schedule (overrides EPLACE_DENS)
     MACRO_PLACER_EPLACE_HANDOFF=auto|fixed — auto stops when density violations fall and WL plateaus
@@ -101,7 +100,8 @@ Env:
     MACRO_PLACER_POLE_LS_* — line search along multipole field (ROUNDs, ALPHAs comma list)
     MACRO_PLACER_PAIR_POLE_* — paired macros joint drift (STEPS, COEF scale vs single-macro)
     MACRO_PLACER_REPEL_ROUNDS=N  geometric repulsion passes before Torch (0 skips)
-    MACRO_PLACER_TORCH_REFINE=1|0 differentiable pin‑HPWL + overlap barrier (+ margin/grid spread cues)
+    MACRO_PLACER_TORCH_REFINE=1|0 differentiable pin‑HPWL + overlap barrier (default 0 if n_hard>400 else 1; set 1 to force on)
+    MACRO_PLACER_TORCH_PROX_UM — center-distance cutoff (µm) for sparse overlap pairs in Torch refine
     MACRO_PLACER_TORCH_STEPS / _LR / _OV / _MARGIN / _GRID / _DEVICE (DEVICE=cpu default; avoids silent CUDA mismatch)
     MACRO_PLACER_SAVE_HISTORY=1  → saves vis/placer_history_<bench>.pt (positions over time).
 
@@ -115,6 +115,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import time as _time_mod
 from pathlib import Path
 
 import numpy as np
@@ -385,6 +386,12 @@ class SurrogateMoboPlacer:
         random.seed(self.seed_base)
         np.random.seed(self.seed_base)
 
+        _t_start = _time_mod.monotonic()
+        _budget_secs = float(os.environ.get("MACRO_PLACER_BUDGET_SECS", "3000"))
+
+        def _time_ok(reserve_secs: float = 0.0) -> bool:
+            return (_time_mod.monotonic() - _t_start) < (_budget_secs - reserve_secs)
+
         n_hard = benchmark.num_hard_macros
         plc = _load_plc(benchmark)
         record = os.environ.get("MACRO_PLACER_SAVE_HISTORY", "").lower() in (
@@ -412,6 +419,7 @@ class SurrogateMoboPlacer:
             "yes",
         )
         orient_q = np.zeros(n_hard, dtype=np.int8)
+        orient_steps = int(os.environ.get("MACRO_PLACER_ORIENT_STEPS", "0"))
 
         soft_xy = benchmark.macro_positions[n_hard :].numpy().astype(np.float64)
         ports_xy = benchmark.port_positions.numpy().astype(np.float64)
@@ -739,6 +747,8 @@ class SurrogateMoboPlacer:
         if ic_raw is not None and str(ic_raw).strip():
             iterations = max(iter_floor, min(iterations, int(ic_raw)))
 
+        _size_scale = math.sqrt(max(n_hard, 1)) / math.sqrt(246.0)
+
         def legalize(seed_pos: np.ndarray, movable_order=None) -> np.ndarray:
             """
             Legalize movable macros sequentially. ``movable_order`` lists movable indices
@@ -884,7 +894,7 @@ class SurrogateMoboPlacer:
             pos = legalize(base.copy())
             if os.environ.get("MACRO_PLACER_FD_WARM", "1").lower() in ("1", "true", "yes"):
                 pos = fd_graph_relax(pos, rng)
-            eplace_on = os.environ.get("MACRO_PLACER_EPLACE_GLOBAL", "0").lower() in (
+            eplace_on = os.environ.get("MACRO_PLACER_EPLACE_GLOBAL", "1").lower() in (
                 "1",
                 "true",
                 "yes",
@@ -944,11 +954,6 @@ class SurrogateMoboPlacer:
             ) -> float:
                 if ramp_on:
                     t = min(1.0, max(0.0, frac))
-                    ramp_shape = os.environ.get("MACRO_PLACER_SA_RAMP_SHAPE", "linear").lower()
-                    if ramp_shape == "concave":
-                        t = 1.0 - (1.0 - t) ** 2
-                    elif ramp_shape == "convex":
-                        t = t**2
                     dens_eff = dens_w * (d_r0 + (d_r1 - d_r0) * t)
                     rscale = r_r0 + (r_r1 - r_r0) * t
                 else:
@@ -1098,6 +1103,15 @@ class SurrogateMoboPlacer:
                     if overlaps_idx(i, pos) or overlaps_idx(j, pos):
                         pos[i, 0], pos[i, 1] = ox, oy
                         pos[j, 0], pos[j, 1] = jox, joy
+                        if hpwl_snap is not None:
+                            hpwl_arr[:] = hpwl_snap
+                        wl_sum = wl_snap
+                        if ori_arr_snap is not None:
+                            ori_arr[:] = ori_arr_snap
+                            ori_sum = ori_sum_snap
+                        if press_arr_snap is not None:
+                            press_arr[:] = press_arr_snap
+                            press_sum = press_sum_snap
                         continue
                     wl_sum = refresh_hpwl_macros(pos, [i, j])
                     if ori_arr is not None or press_arr is not None:
@@ -1268,13 +1282,14 @@ class SurrogateMoboPlacer:
             ft[:n_hard] = torch.tensor(cand_np, dtype=torch.float32)
             _set_placement(combo_plc, ft, benchmark)
             oref = orient_override if orient_override is not None else orient_q
-            apply_macro_orientations_to_plc(
-                combo_plc,
-                benchmark,
-                oref,
-                offsets_np,
-                allow_quarter=orient_quarter,
-            )
+            if orient_steps > 0 or orient_override is not None:
+                apply_macro_orientations_to_plc(
+                    combo_plc,
+                    benchmark,
+                    oref,
+                    offsets_np,
+                    allow_quarter=orient_quarter,
+                )
             c = compute_proxy_cost(ft, benchmark, combo_plc)
             return ft, c
 
@@ -1516,7 +1531,7 @@ class SurrogateMoboPlacer:
                 (float(ic["proxy_cost"]), lz0.copy(), ic, stat_guess, cwl, cden, 0.0, dref)
             )
 
-        eplace_pool = os.environ.get("MACRO_PLACER_EPLACE_POOL", "0").lower() in ("1", "true", "yes")
+        eplace_pool = os.environ.get("MACRO_PLACER_EPLACE_POOL", "1").lower() in ("1", "true", "yes")
         if eplace_pool:
             cluster_pool = macro_clusters_from_nets(n_hard, macro_to_nets, movable_mask)
             epos = _eplace_relax(ih, cluster_pool)
@@ -1806,7 +1821,7 @@ class SurrogateMoboPlacer:
             "false",
             "no",
         )
-        if incr_on:
+        if incr_on and _time_ok(reserve_secs=180.0):
             pc_steps = max(48, min(140, int(16000 / max(n_hard, 40))))
             pc_steps = int(pc_steps * float(os.environ.get("MACRO_PLACER_INCR_SCALE", "1.0")))
             pc_cap = os.environ.get("MACRO_PLACER_PC_STEPS_CAP")
@@ -1923,7 +1938,12 @@ class SurrogateMoboPlacer:
 
         # Oracle‑synced **hotspot evacuation** (PlacementCost max(H,V) map): directly
         # targets the scorer congestion term; guard skips easy designs to save time.
-        hot_steps = int(os.environ.get("MACRO_PLACER_HOT_ESC_STEPS", "30"))
+        hot_steps = int(
+            os.environ.get(
+                "MACRO_PLACER_HOT_ESC_STEPS",
+                str(max(12, int(30 / _size_scale))),
+            )
+        )
         hot_guard = float(os.environ.get("MACRO_PLACER_HOT_ESC_GUARD", "0.76"))
         _, brp_chk = oracle_proxy(global_best_hard)
         run_hot_esc = (
@@ -1931,7 +1951,7 @@ class SurrogateMoboPlacer:
             and brp_chk["overlap_count"] == 0
             and brp_chk["congestion_cost"] > hot_guard * max(brp_chk["wirelength_cost"], 1e-9)
         )
-        if run_hot_esc:
+        if run_hot_esc and _time_ok(reserve_secs=60.0):
             rng_h = np.random.default_rng(self.seed_base + 44044)
             cur_h = global_best_hard.copy()
             _, h0 = oracle_proxy(cur_h)
@@ -1995,7 +2015,7 @@ class SurrogateMoboPlacer:
             "false",
             "no",
         )
-        if fresco_on:
+        if fresco_on and _time_ok(reserve_secs=60.0):
             _, fr0 = oracle_proxy(global_best_hard)
             if (
                 fr0["overlap_count"] == 0
@@ -2009,16 +2029,10 @@ class SurrogateMoboPlacer:
                     global_best_hard = fresco.copy()
 
         # Size-aware oracle refinement scaling for congestion-centric post-SA phases.
-        # Normalized to ~small/medium IBM designs; capped to avoid runaway runtimes.
-        _refine_scale = math.sqrt(max(n_hard, 1)) / math.sqrt(100.0)
-
-        # Cool-bin relocation burst: when congestion dominates WL, do larger relocation jumps
-        # from hot macros to low max(H,V) bins (not just centroid pushes). This targets
-        # alternative basins that local axis/pole moves may miss.
         cool_steps = int(
             os.environ.get(
                 "MACRO_PLACER_COOL_BIN_STEPS",
-                str(int(40 * min(_refine_scale, 2.5))),
+                str(max(10, int(40 / _size_scale))),
             )
         )
         cool_guard = float(os.environ.get("MACRO_PLACER_COOL_BIN_GUARD", "0.80"))
@@ -2031,7 +2045,7 @@ class SurrogateMoboPlacer:
         cool_trials = int(os.environ.get("MACRO_PLACER_COOL_BIN_TRIALS", "8"))
         cool_hot_bias = float(os.environ.get("MACRO_PLACER_COOL_BIN_HOT_BIAS", "0.85"))
         cool_pat = int(os.environ.get("MACRO_PLACER_COOL_BIN_PATIENCE", "6"))
-        if cool_steps > 0 and cool_cells_k > 0 and cool_trials > 0:
+        if cool_steps > 0 and cool_cells_k > 0 and cool_trials > 0 and _time_ok(reserve_secs=90.0):
             _, cb0 = oracle_proxy(global_best_hard)
             run_cool_bin = (
                 cb0["overlap_count"] == 0
@@ -2128,14 +2142,14 @@ class SurrogateMoboPlacer:
         swap_steps = int(
             os.environ.get(
                 "MACRO_PLACER_SWAP_STEPS",
-                str(int(28 * min(_refine_scale, 2.0))),
+                str(max(8, int(28 / _size_scale))),
             )
         )
         swap_guard = float(os.environ.get("MACRO_PLACER_SWAP_GUARD", "0.82"))
         swap_top_hot = float(os.environ.get("MACRO_PLACER_SWAP_HOT_PCT", "18"))
         swap_top_cool = float(os.environ.get("MACRO_PLACER_SWAP_COOL_PCT", "22"))
         swap_pat = int(os.environ.get("MACRO_PLACER_SWAP_PATIENCE", "5"))
-        if swap_steps > 0:
+        if swap_steps > 0 and _time_ok(reserve_secs=60.0):
             _, sw0 = oracle_proxy(global_best_hard)
             if (
                 sw0["overlap_count"] == 0
@@ -2299,10 +2313,11 @@ class SurrogateMoboPlacer:
             _, ver = oracle_proxy(cand)
             if ver["overlap_count"]:
                 return None, None
+            # Tier-1 oracle only (never surrogate) for ``best_scalar`` / survivor gating.
             rec = float(ver["proxy_cost"])
-            return cand, min(cand_cst, rec)
+            return cand, rec
 
-        if ag_steps > 0 and dlam > 0:
+        if ag_steps > 0 and dlam > 0 and _time_ok(reserve_secs=90.0):
             cur_ax, best_ax_cst = _pull_axis_candidate(global_best_hard, dlam, ag_steps)
             if cur_ax is not None and best_ax_cst < best_scalar:
                 best_scalar = float(best_ax_cst)
@@ -2310,6 +2325,7 @@ class SurrogateMoboPlacer:
             if (
                 cur_ax is not None
                 and ag_steps2 > 0
+                and _time_ok(reserve_secs=60.0)
                 and os.environ.get("MACRO_PLACER_AXIS_PASS2_ENABLE", "1").lower()
                 not in ("0", "false", "no")
             ):
@@ -2322,6 +2338,7 @@ class SurrogateMoboPlacer:
                 cur_ax is not None
                 and ag_steps3 > 0
                 and pass3_scale > 0.0
+                and _time_ok(reserve_secs=45.0)
                 and os.environ.get("MACRO_PLACER_AXIS_PASS3_ENABLE", "1").lower()
                 not in ("0", "false", "no")
             ):
@@ -2333,21 +2350,36 @@ class SurrogateMoboPlacer:
 
         # Multi‑pole PlacementCost evacuation: superposed repulsion from K separated hotspots
         # (novel vs single centroid / axis-only refinement; targets multi-modal congestion).
-        mp_steps = int(os.environ.get("MACRO_PLACER_MULTIPOLE_STEPS", "24"))
+        mp_steps = int(
+            os.environ.get(
+                "MACRO_PLACER_MULTIPOLE_STEPS",
+                str(max(8, int(24 / _size_scale))),
+            )
+        )
         mp_k = int(os.environ.get("MACRO_PLACER_MULTIPOLE_K", "12"))
         mp_sep = int(os.environ.get("MACRO_PLACER_MULTIPOLE_MIN_SEP", "2"))
         mp_guard = float(os.environ.get("MACRO_PLACER_MULTIPOLE_GUARD", "0.74"))
         mp_exp = float(os.environ.get("MACRO_PLACER_MULTIPOLE_EXP", "2.05"))
         mp_eta = float(os.environ.get("MACRO_PLACER_MULTIPOLE_ETA", "0.21"))
         mp_m_bias = float(os.environ.get("MACRO_PLACER_MULTIPOLE_MACRO_BIAS", "0.44"))
-        pls_rounds = int(os.environ.get("MACRO_PLACER_POLE_LS_ROUNDS", "10"))
+        pls_rounds = int(
+            os.environ.get(
+                "MACRO_PLACER_POLE_LS_ROUNDS",
+                str(max(4, int(10 / _size_scale))),
+            )
+        )
         pls_alphas = [
             float(x.strip())
             for x in os.environ.get("MACRO_PLACER_POLE_LS_ALPHAS", "0.34,0.58,1.0,1.34").split(",")
             if x.strip()
         ]
         pls_on = os.environ.get("MACRO_PLACER_POLE_LS_ENABLE", "1").lower() not in ("0", "false", "no")
-        pp_steps = int(os.environ.get("MACRO_PLACER_PAIR_POLE_STEPS", "9"))
+        pp_steps = int(
+            os.environ.get(
+                "MACRO_PLACER_PAIR_POLE_STEPS",
+                str(max(3, int(9 / _size_scale))),
+            )
+        )
         pp_coef = float(os.environ.get("MACRO_PLACER_PAIR_POLE_COEF", "0.81"))
         pp_on = os.environ.get("MACRO_PLACER_PAIR_POLE_ENABLE", "1").lower() not in ("0", "false", "no")
 
@@ -2374,6 +2406,7 @@ class SurrogateMoboPlacer:
         if (
             mp_steps > 0
             and mp_k >= 2
+            and _time_ok(reserve_secs=60.0)
             and os.environ.get("MACRO_PLACER_MULTIPOLE_ENABLE", "1").lower()
             not in ("0", "false", "no")
         ):
@@ -2418,7 +2451,7 @@ class SurrogateMoboPlacer:
 
         # Multi‑scale line search along the **same** multipole field (few oracles / step;
         # breaks fixed-step plateaus). Optional **paired** joint drift for correlated escape.
-        if pls_rounds > 0 and pls_on and mp_k >= 2 and pls_alphas:
+        if pls_rounds > 0 and pls_on and mp_k >= 2 and pls_alphas and _time_ok(reserve_secs=45.0):
             rng_ls = np.random.default_rng(self.seed_base + 61201)
             _, br_pls = oracle_proxy(global_best_hard)
             if _multipole_cong_guard(br_pls):
@@ -2463,7 +2496,7 @@ class SurrogateMoboPlacer:
                     best_scalar = float(fpls["proxy_cost"])
                     global_best_hard = lb_ls.copy()
 
-        if pp_steps > 0 and pp_on and mp_k >= 2 and len(movable_idx) >= 2:
+        if pp_steps > 0 and pp_on and mp_k >= 2 and len(movable_idx) >= 2 and _time_ok(reserve_secs=30.0):
             rng_pp = np.random.default_rng(self.seed_base + 66333)
             _, br_pp = oracle_proxy(global_best_hard)
             if _multipole_cong_guard(br_pp):
@@ -2563,7 +2596,6 @@ class SurrogateMoboPlacer:
                 pos = legalize(pos)
             return pos
 
-        orient_steps = int(os.environ.get("MACRO_PLACER_ORIENT_STEPS", "0"))
         if orient_steps > 0 and combo_plc is not None:
             rng_or = np.random.default_rng(self.seed_base + 55231)
             cur_o = global_best_hard.copy()
@@ -2662,11 +2694,13 @@ class SurrogateMoboPlacer:
         # ── differentiable pin‑HPWL + overlap barrier (Torch) ─────────────────────────
         # Smooth discrete SA under differentiable WL + overlap / spread cues (DG‑RePlAce-ish),
         # then legalization + oracle — soft loss is never authoritative.
+        _torch_default = "0" if n_hard > 400 else "1"
         use_tr = (
-            os.environ.get("MACRO_PLACER_TORCH_REFINE", "1").lower()
+            os.environ.get("MACRO_PLACER_TORCH_REFINE", _torch_default).lower()
             in ("1", "true", "yes")
             and combo_plc is not None
             and num_nets > 0
+            and _time_ok(reserve_secs=120.0)
         )
         if use_tr:
             dev_s = os.environ.get("MACRO_PLACER_TORCH_DEVICE", "cpu").lower()
@@ -2760,6 +2794,16 @@ class SurrogateMoboPlacer:
 
             opt = torch.optim.Adam([pos_h], lr=float(lr))
             halo_t = torch.tensor(float(halo_um + 8e-3), dtype=torch.float32, device=device)
+            prox_um = float(
+                os.environ.get(
+                    "MACRO_PLACER_TORCH_PROX_UM",
+                    str(4.0 * float(np.mean(sizes_np[:, 0] + sizes_np[:, 1]))),
+                )
+            )
+            prox_t = torch.tensor(prox_um, dtype=torch.float32, device=device)
+            tri_u = torch.triu(
+                torch.ones(n_hard, n_hard, device=device, dtype=torch.bool), diagonal=1
+            )
 
             for _step in range(stps):
                 ph = pos_h
@@ -2773,16 +2817,19 @@ class SurrogateMoboPlacer:
                     by = ys.max() - ys.min()
                     loss_hpwl = loss_hpwl + nw_t[nid] * (bx + by)
 
-                adx = torch.abs(ph[:, 0:1] - ph[:, 0:1].transpose(0, 1))
-                ady = torch.abs(ph[:, 1:2] - ph[:, 1:2].transpose(0, 1))
-                need_x = sw_t.unsqueeze(1) + sw_t.unsqueeze(0) + halo_t
-                need_y = sh_t.unsqueeze(1) + sh_t.unsqueeze(0) + halo_t
-                ux = torch.nn.functional.softplus(torch.clamp(need_x - adx, max=180.0))
-                uy = torch.nn.functional.softplus(torch.clamp(need_y - ady, max=180.0))
-                tri_u = torch.triu(
-                    torch.ones(n_hard, n_hard, device=device, dtype=torch.bool), diagonal=1
-                )
-                loss_ov = ov_l * (ux[tri_u] * uy[tri_u]).sum()
+                dist = torch.cdist(ph[:, :2], ph[:, :2], p=2.0)
+                near = (dist <= prox_t) & tri_u
+                ii, jj = torch.where(near)
+                if ii.numel() > 0:
+                    adx = (ph[ii, 0] - ph[jj, 0]).abs()
+                    ady = (ph[ii, 1] - ph[jj, 1]).abs()
+                    need_x_ij = sw_t[ii] + sw_t[jj] + halo_t
+                    need_y_ij = sh_t[ii] + sh_t[jj] + halo_t
+                    ux = torch.nn.functional.softplus(torch.clamp(need_x_ij - adx, max=180.0))
+                    uy = torch.nn.functional.softplus(torch.clamp(need_y_ij - ady, max=180.0))
+                    loss_ov = ov_l * (ux * uy).sum()
+                else:
+                    loss_ov = torch.tensor(0.0, dtype=torch.float32, device=device)
 
                 mx_ed = torch.minimum(ph[:, 0] - hw_t, cw_t - ph[:, 0] - hw_t)
                 my_ed = torch.minimum(ph[:, 1] - hh_t, ch_t - ph[:, 1] - hh_t)
