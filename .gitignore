@@ -73,6 +73,7 @@ checkpoints/
 tmp/
 temp/
 *.tmp
+os_debug.txt
 # MacroPlacement evaluator (submodule)
 # Keep the submodule but ignore unnecessary files
 external/MacroPlacement/Testcases/
