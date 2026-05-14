@@ -64,6 +64,7 @@ Env:
     MACRO_PLACER_LEGAL_CONG_ORDER — alternate post‑legal shuffle with **coolest‑cell‑first**
       sequential order (hotspot macros legalized last → better local search under PlacementCost).
     MACRO_PLACER_SA_RAMP=1|0 + _SA_DENS_RAMP_LO/_HI + _SA_ROUTE_RAMP_LO/_HI — curriculum WL→density/route stress
+    MACRO_PLACER_SA_RAMP_SHAPE=linear|concave|convex — reshape ramp progress t (concave=fast early; convex=slow early)
     MACRO_PLACER_ADAPT_MODES=1|0  scale density surrogate weights from initial cong/WL probe
     MACRO_PLACER_ADAPT_AXIS_DELTA=1|0  with ADAPT_MODES: scale axis-greed step (AXIS_DELTA×canvas)
       from initial cong/WL — >10 → ×0.55 (finer), <3 → ×1.65 (coarser); mid band unchanged
@@ -941,6 +942,11 @@ class SurrogateMoboPlacer:
             ) -> float:
                 if ramp_on:
                     t = min(1.0, max(0.0, frac))
+                    ramp_shape = os.environ.get("MACRO_PLACER_SA_RAMP_SHAPE", "linear").lower()
+                    if ramp_shape == "concave":
+                        t = 1.0 - (1.0 - t) ** 2
+                    elif ramp_shape == "convex":
+                        t = t**2
                     dens_eff = dens_w * (d_r0 + (d_r1 - d_r0) * t)
                     rscale = r_r0 + (r_r1 - r_r0) * t
                 else:
