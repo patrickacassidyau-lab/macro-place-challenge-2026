@@ -71,6 +71,8 @@ Env:
     MACRO_PLACER_HOT_BLEND / HOT_MIN_RAT / HOT_ESC_STEPS — oracle congestion‑hotspot escape
     MACRO_PLACER_COOL_BIN_* — congestion relief via hotspot-macro relocation to coolest bins
       (large-jump anti-congestion burst; oracle-gated and reverted unless proxy improves)
+    MACRO_PLACER_COOLBIN_NET_HOT=0|1  blend net–bbox hotspot scores into cool-bin hot-macro weights
+    MACRO_PLACER_NET_HOT_COOLBIN_BLEND — blend strength (0=off); optional NET_HOT_COOLBIN_PCT (default 86)
     MACRO_PLACER_SWAP_* — paired hot/cool macro exchange burst (two-macro topology jump,
       oracle-gated) to escape local congestion basins missed by single-macro nudges
     MACRO_PLACER_FRESCO_ENABLE=0|1  congestion fresco: greedy large→small snap into coldest PLC bins (post-survivor)
@@ -2066,6 +2068,36 @@ class SurrogateMoboPlacer:
                             mw[ii] = float(wg[gy, gx]) + 1e-8
                         mw = np.maximum(mw, 1e-12)
                         mw /= np.sum(mw)
+                        cool_net_hot = os.environ.get("MACRO_PLACER_COOLBIN_NET_HOT", "0").lower() in (
+                            "1",
+                            "true",
+                            "yes",
+                        )
+                        nh_blend_cb = float(os.environ.get("MACRO_PLACER_NET_HOT_COOLBIN_BLEND", "0"))
+                        if cool_net_hot and nh_blend_cb > 1e-9:
+                            pct_cb = float(os.environ.get("MACRO_PLACER_NET_HOT_COOLBIN_PCT", "86"))
+                            excess_on_cb = os.environ.get("MACRO_PLACER_NET_HOT_EXCESS", "1").lower() in (
+                                "1",
+                                "true",
+                                "yes",
+                            )
+                            nh_cb = macro_net_bbox_hotspot_scores(
+                                combo_plc,
+                                benchmark,
+                                cur_cb,
+                                hot_percentile=pct_cb,
+                                use_excess_mass=excess_on_cb,
+                            )
+                            nh_vec = np.array(
+                                [float(nh_cb[int(mj)]) + 1e-9 for mj in mj_list],
+                                dtype=np.float64,
+                            )
+                            nh_vec = np.maximum(nh_vec, 1e-14)
+                            nh_vec /= np.sum(nh_vec)
+                            b = min(1.0, max(0.0, nh_blend_cb))
+                            mw = (1.0 - b) * mw + b * nh_vec
+                            mw = np.maximum(mw, 1e-14)
+                            mw /= np.sum(mw)
                         if rng_cb.random() < cool_hot_bias:
                             mi = int(mj_list[int(rng_cb.choice(len(mj_list), p=mw))])
                         else:
