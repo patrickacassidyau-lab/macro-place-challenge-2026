@@ -2059,47 +2059,30 @@ class SurrogateMoboPlacer:
                         cell_w = cw / max(ncol, 1)
                         cell_h = ch / max(nrow, 1)
 
-                        # Hot macro sampling weights from current occupancy congestion.
-                        mj_list = movable_idx.astype(np.int64)
-                        mw = np.zeros(len(mj_list), dtype=np.float64)
-                        for ii, mj in enumerate(mj_list):
-                            gx = int(np.clip(np.floor(cur_cb[int(mj), 0] / cell_w), 0, ncol - 1))
-                            gy = int(np.clip(np.floor(cur_cb[int(mj), 1] / cell_h), 0, nrow - 1))
-                            mw[ii] = float(wg[gy, gx]) + 1e-8
-                        mw = np.maximum(mw, 1e-12)
-                        mw /= np.sum(mw)
-                        cool_net_hot = os.environ.get("MACRO_PLACER_COOLBIN_NET_HOT", "0").lower() in (
+                        if os.environ.get("MACRO_PLACER_COOLBIN_NET_HOT", "0").lower() in (
                             "1",
                             "true",
                             "yes",
-                        )
-                        nh_blend_cb = float(os.environ.get("MACRO_PLACER_NET_HOT_COOLBIN_BLEND", "0"))
-                        if cool_net_hot and nh_blend_cb > 1e-9:
-                            pct_cb = float(os.environ.get("MACRO_PLACER_NET_HOT_COOLBIN_PCT", "86"))
-                            excess_on_cb = os.environ.get("MACRO_PLACER_NET_HOT_EXCESS", "1").lower() in (
-                                "1",
-                                "true",
-                                "yes",
-                            )
-                            nh_cb = macro_net_bbox_hotspot_scores(
+                        ):
+                            _nh_cb = macro_net_bbox_hotspot_scores(
                                 combo_plc,
                                 benchmark,
                                 cur_cb,
-                                hot_percentile=pct_cb,
-                                use_excess_mass=excess_on_cb,
+                                hot_percentile=float(os.environ.get("MACRO_PLACER_NET_HOT_PCT", "86")),
+                                use_excess_mass=True,
                             )
-                            nh_vec = np.array(
-                                [float(nh_cb[int(mj)]) + 1e-9 for mj in mj_list],
-                                dtype=np.float64,
-                            )
-                            nh_vec = np.maximum(nh_vec, 1e-14)
-                            nh_vec /= np.sum(nh_vec)
-                            b = min(1.0, max(0.0, nh_blend_cb))
-                            mw = (1.0 - b) * mw + b * nh_vec
-                            mw = np.maximum(mw, 1e-14)
-                            mw /= np.sum(mw)
+                            _nh_cb_blend = float(os.environ.get("MACRO_PLACER_NET_HOT_COOLBIN_BLEND", "0.55"))
+                        else:
+                            _nh_cb = None
+                            _nh_cb_blend = 0.0
                         if rng_cb.random() < cool_hot_bias:
-                            mi = int(mj_list[int(rng_cb.choice(len(mj_list), p=mw))])
+                            mi = sample_macro_biased_hot(
+                                cur_cb,
+                                rng_cb,
+                                1.0,
+                                net_hot_scores=_nh_cb,
+                                net_hot_blend=_nh_cb_blend,
+                            )
                         else:
                             mi = int(rng_cb.choice(movable_idx))
 
