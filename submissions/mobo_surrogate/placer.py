@@ -70,8 +70,8 @@ Env:
     MACRO_PLACER_HOT_BLEND / HOT_MIN_RAT / HOT_ESC_STEPS — oracle congestion‑hotspot escape
     MACRO_PLACER_COOL_BIN_* — congestion relief via hotspot-macro relocation to coolest bins
       (large-jump anti-congestion burst; oracle-gated and reverted unless proxy improves)
-    MACRO_PLACER_COOLBIN_NET_HOT=0|1  blend net–bbox hotspot scores into cool-bin hot-macro weights
-    MACRO_PLACER_NET_HOT_COOLBIN_BLEND — blend strength (0=off); optional NET_HOT_COOLBIN_PCT (default 86)
+    MACRO_PLACER_COOLBIN_NET_HOT=0|1  blend net–bbox hotspot scores into cool-bin hot-macro weights (default 1)
+    MACRO_PLACER_NET_HOT_COOLBIN_BLEND — blend strength (default 0.55); optional NET_HOT_COOLBIN_PCT (default 86)
     MACRO_PLACER_SWAP_* — paired hot/cool macro exchange burst (two-macro topology jump,
       oracle-gated) to escape local congestion basins missed by single-macro nudges
     MACRO_PLACER_FRESCO_ENABLE=0|1  congestion fresco: greedy large→small snap into coldest PLC bins (post-survivor)
@@ -88,7 +88,7 @@ Env:
     MACRO_PLACER_SP_SA=1|0  sequence-pair SA (rotation, chain swap, slack-driven high-fanout moves)
     MACRO_PLACER_SA_LEGALIZE_ONLY=1|0  shorten coordinate SA after SP (local legalizer, not global explorer)
     MACRO_PLACER_SP_ITERS / MACRO_PLACER_SA_LEGAL_ITERS — SP vs residual coordinate SA budgets
-    MACRO_PLACER_ORACLE_BO_STEPS — GP-style random+EI macro-layout parameter search (0 = off)
+    MACRO_PLACER_ORACLE_BO_STEPS — GP-style random+EI macro-layout parameter search (0 = off; default 24)
     MACRO_PLACER_TOPO_SEED=0|1  net-topology upstream/downstream seed before ePlace/SA
     MACRO_PLACER_MULTILEVEL=0|1  cluster → global cluster sites → local macro offsets
     MACRO_PLACER_ORIENT_STEPS — congestion-biased Klein-4 orientation search (0 = off)
@@ -1777,7 +1777,7 @@ class SurrogateMoboPlacer:
         _, best_dc = oracle_proxy(global_best_hard)
         best_scalar = float(best_dc["proxy_cost"])
 
-        bo_steps = int(os.environ.get("MACRO_PLACER_ORACLE_BO_STEPS", "0"))
+        bo_steps = int(os.environ.get("MACRO_PLACER_ORACLE_BO_STEPS", "24"))
         if bo_steps > 0:
             rng_bo = np.random.default_rng(self.seed_base + 88173)
             cx0, cy0 = cw * 0.5, ch * 0.5
@@ -2073,7 +2073,7 @@ class SurrogateMoboPlacer:
                         cell_w = cw / max(ncol, 1)
                         cell_h = ch / max(nrow, 1)
 
-                        if os.environ.get("MACRO_PLACER_COOLBIN_NET_HOT", "0").lower() in (
+                        if os.environ.get("MACRO_PLACER_COOLBIN_NET_HOT", "1").lower() in (
                             "1",
                             "true",
                             "yes",
