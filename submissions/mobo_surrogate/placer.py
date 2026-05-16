@@ -1581,17 +1581,22 @@ class SurrogateMoboPlacer:
             )
             ih = legalize(_ag_out)
             if design_class == "ibm_large":
+                _ag_revert_threshold = {
+                    "ibm_large": 40.0,
+                    "ibm_medium": 30.0,
+                    "ibm_small": 25.0,
+                }.get(design_class, 30.0)
                 _, _ag_probe = oracle_proxy(ih)
                 _ag_cw = float(_ag_probe["congestion_cost"]) / max(
                     float(_ag_probe["wirelength_cost"]), 1e-9
                 )
-                if _ag_cw > 25.0:
+                if _ag_cw > _ag_revert_threshold:
                     ih = legalize(_ag_seed)
                     if diagnose_on:
                         import sys as _sys_ag
 
                         print(
-                            f"[DIAGNOSE] analytical_global reverted: post-AG cong/wl={_ag_cw:.1f} > 25",
+                            f"[DIAGNOSE] analytical_global reverted: post-AG cong/wl={_ag_cw:.1f} > {_ag_revert_threshold:.0f}",
                             file=_sys_ag.stderr,
                         )
 

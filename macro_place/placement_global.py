@@ -135,13 +135,21 @@ def _per_bin_density_force(
     return grad, delta_i, demand, bin_cap
 
 
-def _hpwl_growth_scale(
-    hpwl_prev: float,
-    hpwl_curr: float,
+def _displacement_growth_scale(
+    pos: np.ndarray,
+    pos_prev: np.ndarray,
+    movable_idx: np.ndarray,
+    cw: float,
+    ch: float,
 ) -> float:
-    """Slow density-strength growth near HPWL inflection (RePlAce TP1/TP2 heuristic)."""
-    delta_hpwl = abs(hpwl_curr - hpwl_prev)
-    return 1.0 / (1.0 + 0.8 * delta_hpwl / max(hpwl_curr, 1e-9))
+    """Cheap O(n_hard) proxy for HPWL change (avoids init_hpwl in the growth loop)."""
+    if movable_idx.size == 0:
+        return 1.0
+    disp = float(
+        np.mean(np.linalg.norm(pos[movable_idx] - pos_prev[movable_idx], axis=1))
+    )
+    hpwl_proxy_delta = disp / max(float(cw + ch) * 0.01, 1e-9)
+    return 1.0 / (1.0 + 0.8 * min(hpwl_proxy_delta, 5.0))
 
 
 def eplace_wl_density_relax(
@@ -197,7 +205,7 @@ def eplace_wl_density_relax(
     delta_i = np.zeros(n_hard, dtype=np.float64)
     wl_stride = max(1, int(hpwl_growth_stride))
     growth_scale = 1.0
-    hpwl_prev = float(wl_fn(out)) if wl_fn is not None else 0.0
+    pos_prev_snapshot = out.copy()
 
     for it in range(max_iters):
         disp = np.zeros_like(out)
@@ -255,20 +263,33 @@ def eplace_wl_density_relax(
             out[mi, 0] = np.clip(out[mi, 0] + disp[mi, 0], half_w[mi], cw - half_w[mi])
             out[mi, 1] = np.clip(out[mi, 1] + disp[mi, 1], half_h[mi], ch - half_h[mi])
 
-        if wl_fn is not None and (it % wl_stride == 0 or it + 1 == max_iters):
-            hpwl_curr = float(wl_fn(out))
-            growth_scale = _hpwl_growth_scale(hpwl_prev, hpwl_curr)
-            hpwl_prev = hpwl_curr
+        if it % wl_stride == 0 or it + 1 == max_iters:
+            growth_scale = _displacement_growth_scale(
+                out, pos_prev_snapshot, movable_idx, cw, ch
+            )
+            if handoff_auto and it + 1 >= min_iters and movable_idx.size > 0:
+                wl_hist.append(
+                    float(
+                        np.mean(
+                            np.linalg.norm(
+                                out[movable_idx] - pos_prev_snapshot[movable_idx], axis=1
+                            )
+                        )
+                    )
+                )
+            pos_prev_snapshot = out.copy()
         alpha = min(alpha_cap, alpha * (1.0 + (alpha_growth - 1.0) * growth_scale))
 
-        if handoff_auto and wl_fn is not None and it + 1 >= min_iters:
+        if handoff_auto and it + 1 >= min_iters:
             viol = density_violation_frac_bins(demand, bin_cap)
-            wl_hist.append(hpwl_prev)
             if viol <= viol_thr and len(wl_hist) >= plateau_win:
                 old_wl = wl_hist[-plateau_win]
                 new_wl = wl_hist[-1]
                 if old_wl > 1e-12 and (old_wl - new_wl) / old_wl < plateau_rel:
                     break
+
+    if handoff_auto and wl_fn is not None:
+        wl_fn(out)
 
     return out
 
@@ -530,7 +551,7 @@ def analytical_global_place(
     delta_i = np.zeros(n_hard_pos, dtype=np.float64)
     wl_stride = max(1, int(hpwl_growth_stride))
     growth_scale = 1.0
-    hpwl_prev = float(wl_fn(out)) if wl_fn is not None else 0.0
+    pos_prev_snapshot = out.copy()
 
     for it in range(max_iters):
         disp = np.zeros_like(out)
@@ -589,20 +610,33 @@ def analytical_global_place(
             out[mi, 0] = np.clip(out[mi, 0] + vel[mi, 0], half_w[mi], cw - half_w[mi])
             out[mi, 1] = np.clip(out[mi, 1] + vel[mi, 1], half_h[mi], ch - half_h[mi])
 
-        if wl_fn is not None and (it % wl_stride == 0 or it + 1 == max_iters):
-            hpwl_curr = float(wl_fn(out))
-            growth_scale = _hpwl_growth_scale(hpwl_prev, hpwl_curr)
-            hpwl_prev = hpwl_curr
+        if it % wl_stride == 0 or it + 1 == max_iters:
+            growth_scale = _displacement_growth_scale(
+                out, pos_prev_snapshot, movable_idx, cw, ch
+            )
+            if wl_fn is not None and it + 1 >= min_iters and movable_idx.size > 0:
+                wl_hist.append(
+                    float(
+                        np.mean(
+                            np.linalg.norm(
+                                out[movable_idx] - pos_prev_snapshot[movable_idx], axis=1
+                            )
+                        )
+                    )
+                )
+            pos_prev_snapshot = out.copy()
         alpha = min(alpha_cap, alpha * (1.0 + (growth - 1.0) * growth_scale))
 
         if wl_fn is not None and it + 1 >= min_iters:
             viol = density_violation_frac_bins(demand, bin_cap)
-            wl_hist.append(hpwl_prev)
             if viol <= viol_thr and len(wl_hist) >= plateau_win:
                 old_wl = wl_hist[-plateau_win]
                 new_wl = wl_hist[-1]
                 if old_wl > 1e-12 and (old_wl - new_wl) / old_wl < plateau_rel:
                     break
+
+    if wl_fn is not None:
+        wl_fn(out)
 
     return out
 
