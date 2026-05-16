@@ -2,8 +2,10 @@
 Shared MACRO_PLACER_* environment presets for ``backtest`` / ``evaluate``.
 
 ``--fast`` / ``--smoke`` apply condensed surrogate + oracle **budgets** for quicker wall-clock.
+``--comp`` / ``--full`` set ``MACRO_PLACER_PROFILE`` and competition-quality budgets.
+
 Phases keep the same ordering (multi-mode SA → oracle gates → refine passes); step counts and
-SA length shrink — proxy is not comparable to full-budget competition runs.
+SA length shrink on fast/smoke — proxy is not comparable to full-budget competition runs.
 """
 
 from __future__ import annotations
@@ -13,16 +15,17 @@ from typing import Dict
 
 # Condensed surrogate/oracle budgets (same keys as legacy backtest ``_FAST_BACKTEST_ENV``).
 FAST_MACRO_PLACER_ENV: Dict[str, str] = {
+    "MACRO_PLACER_PROFILE": "fast",
     "MACRO_PLACER_TIME_SCALE": "0.04",
     "MACRO_PLACER_ITER_FLOOR": "160",
     "MACRO_PLACER_ITER_CAP": "300",
-    # More surrogate hypotheses → oracle picks lower proxy (still SA‑budget‑limited).
     "MACRO_PLACER_MODES": "3",
     "MACRO_PLACER_TOPK": "2",
     "MACRO_PLACER_CONGEST_BOOST": "0",
     "MACRO_PLACER_TORCH_REFINE": "0",
     "MACRO_PLACER_POLISH": "0",
-    # Tier‑1 proxy is congestion‑heavy — prioritize oracle coordinate / congestion escapes vs trimming steps.
+    "MACRO_PLACER_ROUTE_BAL": "0.006",
+    "MACRO_PLACER_ROUTE_PRESSURE_W": "0.0018",
     "MACRO_PLACER_AXIS_GREED": "26",
     "MACRO_PLACER_AXIS_GREED_PASS2": "22",
     "MACRO_PLACER_AXIS_PASS2_ENABLE": "1",
@@ -72,6 +75,81 @@ SMOKE_MACRO_PLACER_ENV: Dict[str, str] = {
     "MACRO_PLACER_PC_STEPS_CAP": "22",
     "MACRO_PLACER_REPEL_ROUNDS": "0",
     "MACRO_PLACER_POST_LEGAL": "1",
+}
+
+# Competition submission (~1h/benchmark default budget).
+COMP_MACRO_PLACER_ENV: Dict[str, str] = {
+    "MACRO_PLACER_PROFILE": "comp",
+    "MACRO_PLACER_BUDGET_SECS": "3600",
+    "MACRO_PLACER_TIME_SCALE": "1.0",
+    "MACRO_PLACER_ITER_FLOOR": "1200",
+    "MACRO_PLACER_ITER_CAP": "60000",
+    "MACRO_PLACER_MODES": "5",
+    "MACRO_PLACER_TOPK": "3",
+    "MACRO_PLACER_ROUTE_BAL": "0.006",
+    "MACRO_PLACER_ROUTE_PRESSURE_W": "0.0018",
+    "MACRO_PLACER_CONGEST_BOOST": "0",
+    "MACRO_PLACER_CONGEST_ROUTE_MULT": "1.35",
+    "MACRO_PLACER_EPLACE_ITERS": "200",
+    "MACRO_PLACER_EPLACE_LAMBDA_START": "0.001",
+    "MACRO_PLACER_EPLACE_LAMBDA_GROWTH": "1.08",
+    "MACRO_PLACER_ANALYTICAL_ITERS": "320",
+    "MACRO_PLACER_LEDGER_SURR": "1",
+    "MACRO_PLACER_LEDGER_SURR_MIN_ROWS": "50",
+    "MACRO_PLACER_ORIENT_STEPS": "48",
+    "MACRO_PLACER_POLISH": "1",
+    "MACRO_PLACER_EDGE_ESC_STEPS": "24",
+    "MACRO_PLACER_PC_STEPS_CAP": "120",
+    "MACRO_PLACER_WL_FINAL_STEPS": "80",
+    "MACRO_PLACER_AXIS_GREED": "48",
+    "MACRO_PLACER_AXIS_GREED_PASS2": "40",
+    "MACRO_PLACER_AXIS_GREED_PASS3": "32",
+    "MACRO_PLACER_HOT_ESC_STEPS": "28",
+    "MACRO_PLACER_MULTIPOLE_STEPS": "24",
+    "MACRO_PLACER_POLE_LS_ROUNDS": "14",
+    "MACRO_PLACER_PAIR_POLE_STEPS": "14",
+}
+
+# Local validation: comp surrogate tuning + oracle phases, ≤15 min/bench on ibm01-class designs.
+VALIDATE_MACRO_PLACER_ENV: Dict[str, str] = {
+    "MACRO_PLACER_PROFILE": "comp",
+    "MACRO_PLACER_LEDGER_SURR": "0",
+    "MACRO_PLACER_BUDGET_SECS": "720",
+    "MACRO_PLACER_TIME_SCALE": "0.35",
+    "MACRO_PLACER_ITER_FLOOR": "800",
+    "MACRO_PLACER_ITER_CAP": "12000",
+    "MACRO_PLACER_MODES": "4",
+    "MACRO_PLACER_TOPK": "2",
+    "MACRO_PLACER_ROUTE_BAL": "0.006",
+    "MACRO_PLACER_ROUTE_PRESSURE_W": "0.0018",
+    "MACRO_PLACER_CONGEST_BOOST": "0",
+    "MACRO_PLACER_EPLACE_ITERS": "96",
+    "MACRO_PLACER_ANALYTICAL_ITERS": "96",
+    "MACRO_PLACER_LEDGER_SURR_MIN_ROWS": "50",
+    "MACRO_PLACER_ORIENT_STEPS": "0",
+    "MACRO_PLACER_POLISH": "0",
+    "MACRO_PLACER_EDGE_ESC_STEPS": "12",
+    "MACRO_PLACER_PC_STEPS_CAP": "48",
+    "MACRO_PLACER_WL_FINAL_STEPS": "40",
+    "MACRO_PLACER_AXIS_GREED": "32",
+    "MACRO_PLACER_AXIS_GREED_PASS2": "24",
+    "MACRO_PLACER_HOT_ESC_STEPS": "12",
+    "MACRO_PLACER_MULTIPOLE_STEPS": "12",
+    "MACRO_PLACER_POLE_LS_ROUNDS": "8",
+    "MACRO_PLACER_PAIR_POLE_STEPS": "8",
+    "MACRO_PLACER_TORCH_REFINE": "0",
+}
+
+FULL_MACRO_PLACER_ENV: Dict[str, str] = {
+    **COMP_MACRO_PLACER_ENV,
+    "MACRO_PLACER_PROFILE": "full",
+    "MACRO_PLACER_BUDGET_SECS": "7200",
+    "MACRO_PLACER_ITER_CAP": "120000",
+    "MACRO_PLACER_EPLACE_ITERS": "400",
+    "MACRO_PLACER_ANALYTICAL_ITERS": "480",
+    "MACRO_PLACER_PC_STEPS_CAP": "200",
+    "MACRO_PLACER_WL_FINAL_STEPS": "120",
+    "MACRO_PLACER_ORIENT_STEPS": "64",
 }
 
 

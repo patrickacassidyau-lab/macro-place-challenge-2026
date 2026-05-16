@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterShellExecution": [
+      {
+        "command": ".cursor/hooks/refresh-placement-progress.sh"
+      }
+    ]
+  }
+}

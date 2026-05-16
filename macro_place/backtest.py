@@ -59,8 +59,11 @@ from macro_place.evaluate import (
 from macro_place.loader import load_benchmark, load_benchmark_from_dir
 from macro_place.objective import _set_placement, compute_proxy_cost
 from macro_place.placer_presets import (
+    COMP_MACRO_PLACER_ENV as _COMP_BACKTEST_ENV,
     FAST_MACRO_PLACER_ENV as _FAST_BACKTEST_ENV,
+    FULL_MACRO_PLACER_ENV as _FULL_BACKTEST_ENV,
     SMOKE_MACRO_PLACER_ENV as _SMOKE_BACKTEST_ENV,
+    VALIDATE_MACRO_PLACER_ENV as _VALIDATE_BACKTEST_ENV,
     apply_preset_env,
 )
 from macro_place.routing_surrogate import (
@@ -471,6 +474,21 @@ def main(argv: Optional[List[str]] = None) -> None:
         "Proxy not comparable — wiring check only; "
         "dominates --fast if both are set.",
     )
+    p.add_argument(
+        "--comp",
+        action="store_true",
+        help="Competition profile: MACRO_PLACER_PROFILE=comp, 1h/bench budget, WL-aligned surrogate.",
+    )
+    p.add_argument(
+        "--full",
+        action="store_true",
+        help="Max-quality profile (2h/bench default). Overrides --comp if both set.",
+    )
+    p.add_argument(
+        "--validate",
+        action="store_true",
+        help="Comp tuning with ~10–15 min/bench budgets (local gate; not submission quality).",
+    )
 
     args = p.parse_args(argv)
 
@@ -508,12 +526,24 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     if getattr(args, "smoke", False):
         apply_preset_env(_SMOKE_BACKTEST_ENV)
+    elif getattr(args, "full", False):
+        apply_preset_env(_FULL_BACKTEST_ENV)
+    elif getattr(args, "comp", False):
+        apply_preset_env(_COMP_BACKTEST_ENV)
+    elif getattr(args, "validate", False):
+        apply_preset_env(_VALIDATE_BACKTEST_ENV)
     elif args.fast:
         apply_preset_env(_FAST_BACKTEST_ENV)
 
     tags = ""
     if getattr(args, "smoke", False):
         tags = "  [SMOKE preset: very coarse — validate wiring only; proxy not comparable]"
+    elif getattr(args, "full", False):
+        tags = "  [FULL profile: competition max-quality budgets]"
+    elif getattr(args, "comp", False):
+        tags = "  [COMP profile: competition submission budgets (~1h/bench)]"
+    elif getattr(args, "validate", False):
+        tags = "  [VALIDATE preset: comp tuning, ≤15 min/bench local gate]"
     elif args.fast:
         tags = (
             "  [FAST preset: ITER_CAP/oracle trims — unset MACRO_PLACER_ITER_CAP etc. for full quality]"
