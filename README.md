@@ -1,5 +1,7 @@
 # Macro Chip placement
 
+;tldr see placer.py
+
 Beats both the SA proxy baseline and greedy placer across IBM ICCAD04 and NanGate45 benchmarks.
 
 A two-stage macro placement engine combining surrogate multi-objective Bayesian optimization with true Tier-1 proxy (PlacementCost) survivor selection. The core insight: run cheap surrogate SA across multiple scalarizations to explore a sparse Pareto frontier, then let the real oracle pick winners — rather than committing to a single objective from the start.
