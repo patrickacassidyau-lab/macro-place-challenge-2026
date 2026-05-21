@@ -203,6 +203,8 @@ def eplace_wl_density_relax(
     alpha_cap = float(dens_alpha_cap)
     alpha_growth = float(dens_lambda_growth)
     delta_i = np.zeros(n_hard, dtype=np.float64)
+    vel = np.zeros_like(out)
+    mom = 0.9
     wl_stride = max(1, int(hpwl_growth_stride))
     growth_scale = 1.0
     pos_prev_snapshot = out.copy()
@@ -260,8 +262,9 @@ def eplace_wl_density_relax(
 
         for mi in movable_idx:
             mi = int(mi)
-            out[mi, 0] = np.clip(out[mi, 0] + disp[mi, 0], half_w[mi], cw - half_w[mi])
-            out[mi, 1] = np.clip(out[mi, 1] + disp[mi, 1], half_h[mi], ch - half_h[mi])
+            vel[mi] = mom * vel[mi] + disp[mi]
+            out[mi, 0] = np.clip(out[mi, 0] + vel[mi, 0], half_w[mi], cw - half_w[mi])
+            out[mi, 1] = np.clip(out[mi, 1] + vel[mi, 1], half_h[mi], ch - half_h[mi])
 
         if it % wl_stride == 0 or it + 1 == max_iters:
             growth_scale = _displacement_growth_scale(

@@ -71,6 +71,7 @@ def run_logged_backtest(
     from macro_place.placer_presets import (
         FAST_MACRO_PLACER_ENV,
         SMOKE_MACRO_PLACER_ENV,
+        VALIDATE_MACRO_PLACER_ENV,
         apply_preset_env,
     )
 
@@ -83,6 +84,8 @@ def run_logged_backtest(
         apply_preset_env(SMOKE_MACRO_PLACER_ENV)
     elif preset == "fast":
         apply_preset_env(FAST_MACRO_PLACER_ENV)
+    elif preset == "validate":
+        apply_preset_env(VALIDATE_MACRO_PLACER_ENV)
     elif preset not in ("quick", "none"):
         raise SystemExit(f"Unknown preset {preset!r}")
 
@@ -190,9 +193,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     run.add_argument("--placer", default="submissions/mobo_surrogate/placer.py")
     run.add_argument(
         "--preset",
-        choices=("smoke", "fast", "quick", "none"),
+        choices=("smoke", "fast", "validate", "quick", "none"),
         default="smoke",
-        help="Backtest preset (smoke=fast iteration).",
+        help="Backtest preset (smoke=fast iteration, validate=comp tuning gate).",
     )
     run.add_argument("-b", "--benchmark", action="append", default=None)
     run.add_argument("--quick", action="store_true")
